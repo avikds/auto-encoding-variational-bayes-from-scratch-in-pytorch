@@ -15,6 +15,7 @@ python scaffold.py
 - [x] **3.** reparameterize
 - [x] **4.** log_normal_diag
 - [x] **5.** sgvb_a
+- [x] **6.** neg_kl_gaussian
 
 ---
 

@@ -191,3 +191,29 @@ def sgvb_a(encoder, decoder, x, L=1):
     # Average over the L samples, retaining one value per datapoint.
     return lower_bound.mean(dim=0)
 
+# Step 6 - neg_kl_gaussian
+def neg_kl_gaussian(mu, logvar):
+    """Compute the negative KL divergence between a diagonal Gaussian
+    and the standard normal prior N(0, I).
+
+    Supports arbitrary leading dimensions and sums over the last dimension.
+
+    Args:
+        mu: Mean of the Gaussian distribution, shape (..., J).
+        logvar: Log variance of the Gaussian distribution, shape (..., J).
+
+    Returns:
+        Negative KL divergence, shape (...,).
+    """
+
+    # Compute the negative KL divergence for each latent dimension.
+    neg_kl = 0.5 * (
+        1.0
+        + logvar
+        - mu.pow(2)
+        - torch.exp(logvar)
+    )
+
+    # Sum across the latent dimensions.
+    return neg_kl.sum(dim=-1)
+
