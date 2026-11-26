@@ -20,6 +20,7 @@ python scaffold.py
 - [x] **8.** gradient_variance
 - [x] **9.** aevb_step
 - [x] **10.** wake_sleep_step
+- [x] **11.** train_model
 
 ---
 

@@ -473,3 +473,167 @@ def wake_sleep_step(encoder, decoder, optimizer, xb, N):
 
     # This function intentionally returns None.
 
+# Step 11 - train_model
+def average_bound(encoder, decoder, X, seed=0):
+    """Compute the average variational lower bound over X.
+
+    Evaluation is performed without gradients and without changing
+    the global PyTorch random number generator state.
+
+    Args:
+        encoder: GaussianEncoder instance.
+        decoder: BernoulliDecoder instance.
+        X: Input dataset.
+        seed: Random seed used for reproducible evaluation.
+
+    Returns:
+        Average lower-bound estimate as a Python float.
+    """
+
+    # Save the current global random number generator state.
+    rng_state = torch.get_rng_state()
+
+    try:
+        # Set the seed for deterministic evaluation.
+        torch.manual_seed(seed)
+
+        # Evaluate the lower bound without computing gradients.
+        with torch.no_grad():
+            bound = sgvb_b(encoder, decoder, X).mean()
+
+        return float(bound.item())
+
+    finally:
+        # Restore the original random number generator state.
+        # Evaluation therefore does not affect subsequent training.
+        torch.set_rng_state(rng_state)
+
+
+def train_model(
+    method,
+    X,
+    X_test,
+    z_dim=20,
+    h_dim=200,
+    n_points=100000,
+    lr=0.02,
+    eval_every=20000,
+    seed=0
+):
+    """Train a VAE using AEVB or the wake-sleep algorithm.
+
+    Training uses minibatches of 100 datapoints and Adagrad optimization.
+
+    Args:
+        method: Training algorithm, either "aevb" or "wake-sleep".
+        X: Training dataset.
+        X_test: Test dataset.
+        z_dim: Number of latent dimensions.
+        h_dim: Number of hidden units.
+        n_points: Number of training points to evaluate.
+        lr: Adagrad learning rate.
+        eval_every: Evaluation interval.
+        seed: Random seed.
+
+    Returns:
+        encoder: Trained GaussianEncoder.
+        decoder: Trained BernoulliDecoder.
+        history: List of (count, train_bound, test_bound) tuples.
+    """
+
+    # Validate the training method and evaluation interval.
+    if method not in ("aevb", "wake-sleep"):
+        raise ValueError("method must be 'aevb' or 'wake-sleep'")
+
+    if eval_every <= 0:
+        raise ValueError("eval_every must be positive")
+
+    # Set the random seed for reproducible initialization and training.
+    torch.manual_seed(seed)
+
+    # Determine the input dimensionality.
+    D = X.shape[1]
+
+    # Initialize a fresh Gaussian encoder.
+    encoder = GaussianEncoder(
+        x_dim=D,
+        h_dim=h_dim,
+        z_dim=z_dim
+    )
+
+    # Initialize a fresh Bernoulli decoder.
+    decoder = BernoulliDecoder(
+        z_dim=z_dim,
+        h_dim=h_dim,
+        x_dim=D
+    )
+
+    # Create one Adagrad optimizer for both networks.
+    optimizer = torch.optim.Adagrad(
+        list(encoder.parameters()) + list(decoder.parameters()),
+        lr=lr,
+        eps=1e-8
+    )
+
+    # Initialize the training history and point counter.
+    history = []
+    count = 0
+
+    # Continue training until the requested number of points is reached.
+    while count < n_points:
+
+        # Randomly sample a minibatch of 100 training datapoints.
+        indices = torch.randint(0, len(X), (100,))
+        xb = X[indices]
+
+        # Perform one update using the selected training algorithm.
+        if method == "aevb":
+
+            aevb_step(
+                encoder,
+                decoder,
+                optimizer,
+                xb,
+                N=len(X)
+            )
+
+        else:
+
+            wake_sleep_step(
+                encoder,
+                decoder,
+                optimizer,
+                xb,
+                N=len(X)
+            )
+
+        # Update the number of training points evaluated.
+        count += 100
+
+        # Evaluate and record the bounds at the specified intervals.
+        if count % eval_every == 0:
+
+            # Evaluate the first 1000 training datapoints.
+            train_bound = average_bound(
+                encoder,
+                decoder,
+                X[:1000]
+            )
+
+            # Evaluate the first 1000 test datapoints.
+            test_bound = average_bound(
+                encoder,
+                decoder,
+                X_test[:1000]
+            )
+
+            # Store the evaluation results.
+            history.append((
+                count,
+                train_bound,
+                test_bound
+            ))
+
+    # Return both trained networks and the evaluation history.
+    return encoder, decoder, history
+
