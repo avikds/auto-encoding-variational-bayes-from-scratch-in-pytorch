@@ -22,6 +22,7 @@ python scaffold.py
 - [x] **10.** wake_sleep_step
 - [x] **11.** train_model
 - [x] **12.** latent_manifold
+- [x] **13.** hmc_posterior
 
 ---
 

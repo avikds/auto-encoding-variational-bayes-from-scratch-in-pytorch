@@ -674,3 +674,203 @@ def latent_manifold(decoder, n=20):
     with torch.no_grad():
         return decoder(grid)
 
+# Step 13 - hmc_posterior
+def hmc_posterior(
+    decoder,
+    x,
+    n_samples=50,
+    n_leapfrog=4,
+    burn_in=100,
+    step_size=0.1,
+    target_accept=0.9
+):
+    """Sample from the true posterior p(z | x) using Hybrid Monte Carlo.
+
+    Runs one independent HMC chain per image, with all chains
+    operating in parallel.
+
+    Args:
+        decoder: Trained BernoulliDecoder instance.
+        x: Batch of observed images, shape (B, D).
+        n_samples: Number of posterior samples to retain.
+        n_leapfrog: Number of leapfrog integration steps.
+        burn_in: Number of initial iterations used for adaptation.
+        step_size: Initial leapfrog step size.
+        target_accept: Target acceptance probability.
+
+    Returns:
+        samples: Posterior samples of shape (n_samples, B, J).
+        accept_rate: Fraction of accepted proposals during sampling.
+    """
+
+    # Determine batch size and latent dimensionality.
+    B = x.shape[0]
+    J = decoder.hidden.in_features
+
+    # Validate the sampling configuration.
+    if n_samples < 1:
+        raise ValueError("n_samples must be positive.")
+
+    if n_leapfrog < 1:
+        raise ValueError("n_leapfrog must be positive.")
+
+    if burn_in < 0:
+        raise ValueError("burn_in cannot be negative.")
+
+    if step_size <= 0:
+        raise ValueError("step_size must be positive.")
+
+    if not 0.0 < target_accept < 1.0:
+        raise ValueError("target_accept must be between 0 and 1.")
+
+    # Initialize one latent chain per image at z = 0.
+    z = torch.zeros(
+        B, J,
+        dtype=x.dtype,
+        device=x.device
+    )
+
+    # Maintain an independent adaptive step size for each chain.
+    step_sizes = torch.full(
+        (B, 1),
+        float(step_size),
+        dtype=x.dtype,
+        device=x.device
+    )
+
+    # Evaluate the log posterior and its gradient with respect to z.
+    def log_joint_and_grad(position):
+
+        # Enable gradients locally, even if the sampler is called
+        # inside a no-gradient context.
+        with torch.enable_grad():
+            z_var = position.detach().requires_grad_(True)
+
+            # Standard normal prior: p(z) = N(0, I).
+            zero = torch.zeros_like(z_var)
+
+            log_pz = log_normal_diag(
+                z_var,
+                zero,
+                zero
+            )
+
+            # Decoder likelihood: p(x | z).
+            log_px_z = decoder.log_prob(x, z_var)
+
+            # Unnormalized log posterior.
+            log_joint = log_px_z + log_pz
+
+            # Obtain the gradient of the summed log posterior
+            # with respect to the latent variables.
+            grad = torch.autograd.grad(
+                log_joint.sum(),
+                z_var
+            )[0]
+
+        return log_joint.detach(), grad.detach()
+
+    # Store posterior samples and count accepted proposals.
+    samples = []
+    accepted_count = 0
+
+    # Sampling does not require gradients through the HMC procedure.
+    with torch.no_grad():
+
+        # Run burn-in iterations followed by retained sampling iterations.
+        for iteration in range(burn_in + n_samples):
+
+            # Draw independent Gaussian momentum for every chain.
+            p = torch.randn_like(z)
+
+            # Preserve the original position.
+            z_proposed = z.clone()
+
+            # Compute the initial log posterior and its gradient.
+            log_joint_old, grad = log_joint_and_grad(z)
+
+            # Initial Hamiltonian:
+            # H = -log p(x | z) - log p(z) + 0.5 * ||p||^2.
+            H_old = (
+                -log_joint_old
+                + 0.5 * p.pow(2).sum(dim=-1)
+            )
+
+            # First half-step of the momentum update.
+            p = p + 0.5 * step_sizes * grad
+
+            # Perform leapfrog integration.
+            for leapfrog_step in range(n_leapfrog):
+
+                # Full position update.
+                z_proposed = z_proposed + step_sizes * p
+
+                # Evaluate the gradient at the new position.
+                log_joint_new, grad_new = log_joint_and_grad(
+                    z_proposed
+                )
+
+                # Full momentum updates between position updates,
+                # followed by the final half-step.
+                if leapfrog_step < n_leapfrog - 1:
+                    p = p + step_sizes * grad_new
+                else:
+                    p = p + 0.5 * step_sizes * grad_new
+
+            # Compute the proposed Hamiltonian.
+            H_new = (
+                -log_joint_new
+                + 0.5 * p.pow(2).sum(dim=-1)
+            )
+
+            # Calculate the log acceptance ratio.
+            log_accept_ratio = H_old - H_new
+
+            # Generate one independent uniform random value per chain.
+            uniform = torch.rand(
+                B,
+                dtype=z.dtype,
+                device=z.device
+            )
+
+            # Compare log(U) with the log acceptance ratio.
+            # This implements min(1, exp(H_old - H_new)).
+            log_uniform = uniform.clamp_min(
+                torch.finfo(z.dtype).tiny
+            ).log()
+
+            accepted = log_uniform < log_accept_ratio
+
+            # Accept the proposed position or retain the old position.
+            z = torch.where(
+                accepted.unsqueeze(-1),
+                z_proposed,
+                z
+            )
+
+            # Adapt individual step sizes during burn-in only.
+            if iteration < burn_in:
+
+                accepted_float = accepted.to(z.dtype).unsqueeze(-1)
+
+                step_sizes = step_sizes * torch.exp(
+                    0.1 * (accepted_float - target_accept)
+                )
+
+            else:
+
+                # Store the accepted or retained latent position.
+                samples.append(z.clone())
+
+                # Count accepted proposals only during sampling.
+                accepted_count += accepted.to(torch.float32).sum().item()
+
+    # Stack samples into shape (n_samples, B, J).
+    samples = torch.stack(samples, dim=0).detach()
+
+    # Compute the overall acceptance fraction across all chains
+    # and retained sampling iterations.
+    accept_rate = accepted_count / (n_samples * B)
+
+    return samples, float(accept_rate)
+
