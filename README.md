@@ -12,6 +12,7 @@ python scaffold.py
 
 - [x] **1.** GaussianEncoder
 - [x] **2.** BernoulliDecoder
+- [x] **3.** reparameterize
 
 ---
 

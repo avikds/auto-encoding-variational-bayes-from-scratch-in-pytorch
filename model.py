@@ -94,3 +94,25 @@ class BernoulliDecoder(nn.Module):
 
         return log_likelihood.sum(dim=-1)
 
+# Step 3 - reparameterize
+def reparameterize(mu, logvar, eps):
+    """Generate a latent sample using the reparameterization trick.
+
+    Args:
+        mu: Mean of the Gaussian distribution, shape (B, J).
+        logvar: Log variance of the Gaussian distribution, shape (B, J).
+        eps: Standard normal noise, shape (B, J) or (L, B, J).
+
+    Returns:
+        z: Reparameterized latent sample, broadcast to eps's shape.
+    """
+
+    # Convert log variance into standard deviation.
+    sigma = torch.exp(0.5 * logvar)
+
+    # Generate the latent sample using the reparameterization trick.
+    # PyTorch broadcasting supports both single and multiple samples.
+    z = mu + sigma * eps
+
+    return z
+
