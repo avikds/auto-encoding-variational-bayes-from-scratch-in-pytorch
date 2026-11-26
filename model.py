@@ -347,3 +347,64 @@ def gradient_variance(encoder, decoder, x, estimator, n_draws=50):
     # Return the sum of coordinate-wise variances as a Python float.
     return coordinate_variance.sum().item()
 
+# Step 9 - aevb_step
+def aevb_step(encoder, decoder, optimizer, xb, N, estimator="B"):
+    """Perform one minibatch AEVB update using gradient ascent.
+
+    The objective consists of:
+        1. The minibatch estimate of the full training-set lower bound.
+        2. A standard Gaussian prior on all encoder and decoder parameters.
+
+    Args:
+        encoder: GaussianEncoder instance.
+        decoder: BernoulliDecoder instance.
+        optimizer: Optimizer containing both networks' parameters.
+        xb: Minibatch of training data, shape (M, D).
+        N: Total number of training datapoints.
+        estimator: "A" or "B", default is "B".
+
+    Returns:
+        Mean lower-bound estimate per datapoint before the update.
+    """
+
+    # Determine the minibatch size.
+    M = len(xb)
+
+    if M == 0:
+        raise ValueError("The minibatch must contain at least one datapoint.")
+
+    if N <= 0 or N < M:
+        raise ValueError("N must be positive and at least as large as M.")
+
+    if estimator not in ("A", "B"):
+        raise ValueError("estimator must be 'A' or 'B'.")
+
+    # Compute the per-datapoint variational lower-bound estimates.
+    if estimator == "A":
+        bound = sgvb_a(encoder, decoder, xb)
+    else:
+        bound = sgvb_b(encoder, decoder, xb)
+
+    # Scale the minibatch sum to estimate the full training-set bound.
+    scaled_bound = (N / M) * bound.sum()
+
+    # Apply a standard Gaussian prior to every parameter
+    # of both the encoder and decoder.
+    weight_prior = sum(
+        param.pow(2).sum()
+        for module in (encoder, decoder)
+        for param in module.parameters()
+    )
+
+    # Construct the MAP objective, omitting the constant term.
+    objective = scaled_bound - 0.5 * weight_prior
+
+    # PyTorch optimizers perform gradient descent.
+    # Negating the objective therefore implements gradient ascent.
+    optimizer.zero_grad()
+    (-objective).backward()
+    optimizer.step()
+
+    # Return the average lower-bound estimate before the update.
+    return float(bound.mean())
+

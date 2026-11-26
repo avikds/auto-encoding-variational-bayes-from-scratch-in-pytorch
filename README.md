@@ -18,6 +18,7 @@ python scaffold.py
 - [x] **6.** neg_kl_gaussian
 - [x] **7.** sgvb_b
 - [x] **8.** gradient_variance
+- [x] **9.** aevb_step
 
 ---
 
