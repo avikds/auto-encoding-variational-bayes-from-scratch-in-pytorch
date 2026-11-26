@@ -637,3 +637,40 @@ def train_model(
     # Return both trained networks and the evaluation history.
     return encoder, decoder, history
 
+# Step 12 - latent_manifold
+def latent_manifold(decoder, n=20):
+    """Generate the decoded n x n latent manifold.
+
+    Latent coordinates are evenly spaced in probability under
+    the standard normal prior using the inverse Gaussian CDF.
+
+    Args:
+        decoder: Trained BernoulliDecoder instance.
+        n: Number of grid points along each latent dimension.
+
+    Returns:
+        Decoded Bernoulli probabilities of shape (n*n, D).
+    """
+
+    # Generate probability coordinates strictly inside (0, 1).
+    u = (torch.arange(n, dtype=torch.get_default_dtype()) + 0.5) / n
+
+    # Map probability coordinates through the inverse CDF
+    # of the standard normal distribution.
+    normal = torch.distributions.Normal(0.0, 1.0)
+    z_values = normal.icdf(u)
+
+    # Construct the latent grid in row-major order.
+    # The first latent coordinate varies across rows.
+    z1 = z_values.repeat_interleave(n)
+
+    # The second latent coordinate varies across columns.
+    z2 = z_values.repeat(n)
+
+    # Combine both coordinates into an (n*n, 2) latent grid.
+    grid = torch.stack((z1, z2), dim=-1)
+
+    # Decode all latent points without computing gradients.
+    with torch.no_grad():
+        return decoder(grid)
+
