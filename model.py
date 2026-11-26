@@ -217,3 +217,42 @@ def neg_kl_gaussian(mu, logvar):
     # Sum across the latent dimensions.
     return neg_kl.sum(dim=-1)
 
+# Step 7 - sgvb_b
+def sgvb_b(encoder, decoder, x, L=1):
+    """Estimator B: analytical negative KL divergence plus
+    the average reconstruction log probability over L samples.
+
+    Args:
+        encoder: GaussianEncoder instance.
+        decoder: BernoulliDecoder instance.
+        x: Input batch of shape (B, D).
+        L: Number of latent samples per datapoint.
+
+    Returns:
+        Variational lower-bound estimates of shape (B,).
+    """
+
+    # Run the encoder once to obtain the mean and log variance.
+    mu, logvar = encoder(x)
+
+    # Draw L independent standard normal noise samples.
+    eps = torch.randn((L,) + tuple(mu.shape))
+
+    # Generate latent samples using the reparameterization trick.
+    z = reparameterize(mu, logvar, eps)
+
+    # Compute the reconstruction log probability for each sample.
+    # Shape: (L, B).
+    log_px_z = decoder.log_prob(x, z)
+
+    # Average reconstruction log probabilities over L samples.
+    # Shape: (B,).
+    reconstruction = log_px_z.mean(dim=0)
+
+    # Compute the analytical negative KL divergence.
+    # Shape: (B,).
+    kl_term = neg_kl_gaussian(mu, logvar)
+
+    # Combine both terms to obtain the variational lower bound.
+    return kl_term + reconstruction
+
