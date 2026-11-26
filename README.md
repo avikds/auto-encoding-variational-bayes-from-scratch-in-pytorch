@@ -13,6 +13,7 @@ python scaffold.py
 - [x] **1.** GaussianEncoder
 - [x] **2.** BernoulliDecoder
 - [x] **3.** reparameterize
+- [x] **4.** log_normal_diag
 
 ---
 

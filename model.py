@@ -116,3 +116,34 @@ def reparameterize(mu, logvar, eps):
 
     return z
 
+# Step 4 - log_normal_diag
+import math
+
+
+def log_normal_diag(z, mu, logvar):
+    """Compute the log density of a diagonal Gaussian distribution.
+
+    The result is summed over the last dimension and supports broadcasting.
+
+    Args:
+        z: Sampled latent variables.
+        mu: Mean of the Gaussian distribution.
+        logvar: Log variance of the Gaussian distribution.
+
+    Returns:
+        Log probability summed over the last dimension.
+    """
+
+    # Compute the squared difference between the sample and the mean.
+    squared_diff = (z - mu) ** 2
+
+    # Compute the log probability for each latent dimension.
+    log_prob = (
+        math.log(2.0 * math.pi)
+        + logvar
+        + squared_diff * torch.exp(-logvar)
+    )
+
+    # Sum over the last dimension and apply the Gaussian normalization factor.
+    return -0.5 * log_prob.sum(dim=-1)
+
