@@ -147,3 +147,47 @@ def log_normal_diag(z, mu, logvar):
     # Sum over the last dimension and apply the Gaussian normalization factor.
     return -0.5 * log_prob.sum(dim=-1)
 
+# Step 5 - sgvb_a
+def sgvb_a(encoder, decoder, x, L=1):
+    """Generic SGVB estimator.
+
+    Computes the average variational lower bound over L
+    reparameterized latent samples for each datapoint.
+
+    Args:
+        encoder: GaussianEncoder instance.
+        decoder: BernoulliDecoder instance.
+        x: Input batch of shape (B, D).
+        L: Number of latent samples per datapoint.
+
+    Returns:
+        Lower-bound estimates of shape (B,).
+    """
+
+    # Run the encoder once to obtain the Gaussian parameters.
+    mu, logvar = encoder(x)
+
+    # Draw L independent standard normal noise samples.
+    eps = torch.randn((L,) + tuple(mu.shape))
+
+    # Generate latent samples using the reparameterization trick.
+    # Resulting shape: (L, B, z_dim).
+    z = reparameterize(mu, logvar, eps)
+
+    # Compute the reconstruction log probability.
+    # Resulting shape: (L, B).
+    log_px_z = decoder.log_prob(x, z)
+
+    # Compute the standard normal prior log probability.
+    zero = torch.zeros_like(z)
+    log_pz = log_normal_diag(z, zero, zero)
+
+    # Compute the encoder's approximate posterior log probability.
+    log_qz_x = log_normal_diag(z, mu, logvar)
+
+    # Evaluate the generic SGVB estimator for every sample.
+    lower_bound = log_px_z + log_pz - log_qz_x
+
+    # Average over the L samples, retaining one value per datapoint.
+    return lower_bound.mean(dim=0)
+
