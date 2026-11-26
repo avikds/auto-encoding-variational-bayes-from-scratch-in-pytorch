@@ -256,3 +256,94 @@ def sgvb_b(encoder, decoder, x, L=1):
     # Combine both terms to obtain the variational lower bound.
     return kl_term + reconstruction
 
+# Step 8 - gradient_variance
+def gradient_variance(encoder, decoder, x, estimator, n_draws=50):
+    """Measure the total variance of the encoder gradients across
+    independent Monte Carlo draws.
+
+    Supported estimators:
+        "A": Generic SGVB estimator.
+        "B": SGVB estimator with analytical KL divergence.
+        "naive": Naive Monte Carlo score-function estimator.
+
+    Args:
+        encoder: GaussianEncoder instance.
+        decoder: BernoulliDecoder instance.
+        x: Input batch of shape (B, D).
+        estimator: One of "A", "B", or "naive".
+        n_draws: Number of independent gradient estimates.
+
+    Returns:
+        Total gradient variance as a Python float.
+    """
+
+    # Validate the estimator selection.
+    if estimator not in ("A", "B", "naive"):
+        raise ValueError("estimator must be 'A', 'B', or 'naive'")
+
+    if n_draws < 2:
+        raise ValueError("n_draws must be at least 2")
+
+    # Collect the encoder parameters whose gradient variance is measured.
+    params = list(encoder.parameters())
+
+    # Store one flattened gradient vector for each independent draw.
+    gradients = []
+
+    for _ in range(n_draws):
+
+        if estimator == "A":
+            # Generic SGVB estimator: sample all terms.
+            obj = sgvb_a(encoder, decoder, x).sum()
+
+        elif estimator == "B":
+            # SGVB estimator with the analytical KL divergence.
+            obj = sgvb_b(encoder, decoder, x).sum()
+
+        else:
+            # Naive Monte Carlo score-function estimator.
+
+            # Compute the approximate posterior parameters.
+            mu, logvar = encoder(x)
+
+            # Sample a latent vector and detach it to remove
+            # the gradient path through the reparameterized sample.
+            eps = torch.randn_like(mu)
+            z = reparameterize(mu, logvar, eps).detach()
+
+            # Compute the log probability under q(z | x).
+            log_q = log_normal_diag(z, mu, logvar)
+
+            # Compute the prior log probability under N(0, I).
+            zero = torch.zeros_like(z)
+            log_pz = log_normal_diag(z, zero, zero)
+
+            # Compute the learning signal and detach it.
+            f = (
+                decoder.log_prob(x, z)
+                + log_pz
+                - log_q
+            ).detach()
+
+            # Form the scalar score-function objective.
+            obj = (f * log_q).sum()
+
+        # Compute gradients with respect to encoder parameters.
+        grads = torch.autograd.grad(obj, params)
+
+        # Flatten and concatenate all parameter gradients into one vector.
+        grad_vector = torch.cat([
+            grad.reshape(-1) for grad in grads
+        ])
+
+        gradients.append(grad_vector)
+
+    # Stack gradient vectors into a tensor of shape (n_draws, P).
+    gradients = torch.stack(gradients, dim=0)
+
+    # Calculate the unbiased variance of each gradient coordinate.
+    coordinate_variance = gradients.var(dim=0)
+
+    # Return the sum of coordinate-wise variances as a Python float.
+    return coordinate_variance.sum().item()
+
