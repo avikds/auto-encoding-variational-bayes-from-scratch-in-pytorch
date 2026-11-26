@@ -11,6 +11,7 @@ python scaffold.py
 ## Steps
 
 - [x] **1.** GaussianEncoder
+- [x] **2.** BernoulliDecoder
 
 ---
 

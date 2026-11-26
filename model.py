@@ -41,3 +41,56 @@ class GaussianEncoder(nn.Module):
 
         return mu, logvar
 
+# Step 2 - BernoulliDecoder
+import torch.nn.functional as F
+
+
+class BernoulliDecoder(nn.Module):
+    """p(x | z): y = sigmoid(W2 tanh(W1 z + b1) + b2).
+
+    All parameters are initialized from N(0, 0.01^2).
+    """
+
+    def __init__(self, z_dim=20, h_dim=500, x_dim=784):
+        super().__init__()
+
+        # Define the hidden and output fully connected layers.
+        self.hidden = nn.Linear(z_dim, h_dim)
+        self.out = nn.Linear(h_dim, x_dim)
+
+        # Initialize all weights and biases from N(0, 0.01^2).
+        for layer in (self.hidden, self.out):
+            nn.init.normal_(layer.weight, mean=0.0, std=0.01)
+            nn.init.normal_(layer.bias, mean=0.0, std=0.01)
+
+    def logits(self, z):
+        # Apply the hidden linear transformation and tanh activation.
+        h = torch.tanh(self.hidden(z))
+
+        # Return the raw pixel logits without applying sigmoid.
+        return self.out(h)
+
+    def forward(self, z):
+        """Return pixel probabilities y."""
+
+        # Convert logits into Bernoulli probabilities.
+        return torch.sigmoid(self.logits(z))
+
+    def log_prob(self, x, z):
+        """Return the Bernoulli log probability, summed over pixels."""
+
+        # Compute raw logits for numerically stable likelihood evaluation.
+        logits = self.logits(z)
+
+        # Expand x to support both (B, z_dim) and (L, B, z_dim) inputs.
+        x = x.expand_as(logits)
+
+        # Compute the negative binary cross-entropy and sum over pixels.
+        log_likelihood = -F.binary_cross_entropy_with_logits(
+            logits,
+            x,
+            reduction="none"
+        )
+
+        return log_likelihood.sum(dim=-1)
+
