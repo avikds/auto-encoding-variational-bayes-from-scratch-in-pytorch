@@ -23,6 +23,7 @@ python scaffold.py
 - [x] **11.** train_model
 - [x] **12.** latent_manifold
 - [x] **13.** hmc_posterior
+- [x] **14.** marginal_likelihood
 
 ---
 

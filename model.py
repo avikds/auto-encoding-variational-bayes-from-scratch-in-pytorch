@@ -874,3 +874,124 @@ def hmc_posterior(
 
     return samples, float(accept_rate)
 
+# Step 14 - marginal_likelihood
+def marginal_likelihood(decoder, x, n_samples=50, n_leapfrog=4, burn_in=100):
+    """Estimate the log marginal likelihood log p(x) for each image.
+
+    Uses Hybrid Monte Carlo posterior samples, a fitted full-covariance
+    Gaussian proposal distribution, and reciprocal importance sampling.
+
+    Args:
+        decoder: Trained BernoulliDecoder instance.
+        x: Input images of shape (B, D).
+        n_samples: Number of HMC samples in each sampling run.
+        n_leapfrog: Number of leapfrog integration steps.
+        burn_in: Number of HMC burn-in iterations.
+
+    Returns:
+        Estimated log marginal likelihoods of shape (B,).
+    """
+
+    if n_samples < 2:
+        raise ValueError("n_samples must be at least 2 to estimate covariance.")
+
+    # All likelihood estimation operations are performed without
+    # maintaining gradients. HMC internally enables gradients when
+    # calculating the posterior gradients with respect to z.
+    with torch.no_grad():
+
+        # ---------------------------------------------------------
+        # Step 1: Draw the first independent set of posterior samples.
+        # ---------------------------------------------------------
+        first_samples, _ = hmc_posterior(
+            decoder,
+            x,
+            n_samples=n_samples,
+            n_leapfrog=n_leapfrog,
+            burn_in=burn_in
+        )
+
+        # first_samples has shape (L, B, J).
+        # Rearrange it to (B, L, J) for per-image density fitting.
+        first_by_image = first_samples.transpose(0, 1)
+
+        # ---------------------------------------------------------
+        # Step 2: Fit one full-covariance Gaussian per image.
+        # ---------------------------------------------------------
+
+        # Calculate the sample mean for each image.
+        sample_mean = first_by_image.mean(dim=1)
+
+        # Center the posterior samples around their respective means.
+        centered = first_by_image - sample_mean.unsqueeze(1)
+
+        # Calculate the unbiased sample covariance matrix.
+        sample_covariance = (
+            centered.transpose(-1, -2) @ centered
+        ) / (n_samples - 1)
+
+        # Add diagonal regularization for numerical stability.
+        J = first_samples.shape[-1]
+
+        identity = torch.eye(
+            J,
+            dtype=first_samples.dtype,
+            device=first_samples.device
+        )
+
+        covariance = sample_covariance + 1e-4 * identity
+
+        # Construct a batch of full-covariance Gaussian distributions.
+        # Each image has its own fitted proposal distribution q(z | x).
+        proposal = torch.distributions.MultivariateNormal(
+            loc=sample_mean,
+            covariance_matrix=covariance
+        )
+
+        # ---------------------------------------------------------
+        # Step 3: Draw a second independent set of posterior samples.
+        # ---------------------------------------------------------
+        second_samples, _ = hmc_posterior(
+            decoder,
+            x,
+            n_samples=n_samples,
+            n_leapfrog=n_leapfrog,
+            burn_in=burn_in
+        )
+
+        # ---------------------------------------------------------
+        # Step 4: Compute the reciprocal importance estimator.
+        # ---------------------------------------------------------
+
+        # Evaluate the fitted Gaussian proposal density.
+        # Shape: (L, B).
+        log_q = proposal.log_prob(second_samples)
+
+        # Evaluate the standard normal prior density.
+        zero = torch.zeros_like(second_samples)
+
+        log_pz = log_normal_diag(
+            second_samples,
+            zero,
+            zero
+        )
+
+        # Evaluate the decoder likelihood.
+        # Shape: (L, B).
+        log_px_z = decoder.log_prob(x, second_samples)
+
+        # Compute log[q(z) / (p(z) * p(x | z))].
+        log_ratio = log_q - log_pz - log_px_z
+
+        # Calculate the logarithm of the mean importance ratio.
+        log_mean_ratio = (
+            torch.logsumexp(log_ratio, dim=0)
+            - math.log(n_samples)
+        )
+
+        # The marginal likelihood estimate is the negative
+        # logarithm of the mean reciprocal importance ratio.
+        log_px = -log_mean_ratio
+
+        return log_px.detach()
+
